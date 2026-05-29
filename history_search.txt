@@ -1,5 +1,5 @@
 === KẾT QUẢ TÌM ĐƯỜNG HUST ===
 Điểm đi: Toa C10
-Điểm đến: Toa C9
-Lộ trình: 17 -> 18 -> 19 -> 23 -> 3 -> 13
-Tổng quãng đường: 732 mét
+Điểm đến: Toa C6
+Lộ trình: 17 -> 18 -> 19 -> 22
+Tổng quãng đường: 325 mét
