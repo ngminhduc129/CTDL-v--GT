@@ -1,7 +1,7 @@
 import tkinter as tk
 from tkinter import ttk, messagebox
 import json
-import heapq # Thêm thư viện này để làm hàng đợi ưu tiên cho Hoạt ảnh
+import heapq
 from loaddata import load_data
 from MinHeap_Graph import Graph
 from findShortestPath_reconstructPath import findShortestPath
@@ -27,23 +27,23 @@ class HUST_Nav_App:
     def __init__(self, root):
         self.root = root
         self.root.title("HUST Pathfinding System - Cinematic Edition")
-        self.root.state('zoomed')
+        self.root.state('zoomed') # Mở to toàn màn hình
         
         # --- BẢNG MÀU CINEMATIC ---
         self.c_bg = "#0d1117"           
         self.c_panel = "#161b22"        
         self.c_text = "#c9d1d9"         
         self.c_text_hl = "#ffffff"      
-        self.c_neon_red = "#ff304f"     # Đỏ Neon (Đường đi đích)
+        self.c_neon_red = "#ff304f"     
         self.c_neon_green = "#2ea043"   
         self.c_dim_line = "#30363d"     
         self.c_node_bg = "#1f2428"      
-        self.c_explore_node = "#f1c40f" # Vàng Neon (Đỉnh đang duyệt)
-        self.c_explore_edge = "#d35400" # Cam sẫm (Đường đang dò)
+        self.c_explore_node = "#f1c40f" 
+        self.c_explore_edge = "#d35400" 
+        self.root.configure(bg=self.c_bg)
 
-        self.scale_factor = 1.0
         self.current_path = None 
-        self.is_animating = False # Khóa nút bấm khi đang chạy hoạt ảnh
+        self.is_animating = False
 
         self.graph_dict, self.nodes_data = load_data("map_data.json")
         if not self.graph_dict:
@@ -60,20 +60,24 @@ class HUST_Nav_App:
             for edge in edges:
                 self.hust_graph.addEdge(edge['from'], edge['to'], edge['weight'])
 
-        self.setup_ui()
-        
+        # Lấy kích thước ảnh gốc để làm cơ sở tính tỷ lệ co giãn
         try:
             self.original_bg = Image.open("hust_map.png")
-            self.bg_photo = ImageTk.PhotoImage(self.original_bg)
-            self.canvas.create_image(0, 0, image=self.bg_photo, anchor="nw", tags="bg_image")
+            self.orig_w, self.orig_h = self.original_bg.size
         except Exception as e:
             print(f"Không tìm thấy ảnh nền: {e}")
+            self.orig_w, self.orig_h = 900, 750
 
-        self.canvas.bind("<ButtonPress-1>", self.start_pan) 
-        self.canvas.bind("<B1-Motion>", self.do_pan)        
-        self.canvas.bind("<MouseWheel>", self.do_zoom)      
+        self.canvas_w = 0
+        self.canvas_h = 0
+        self.scale_ratio = 1.0
+        self.offset_x = 0
+        self.offset_y = 0
 
-        self.draw_map()
+        self.setup_ui()
+        
+        # Sự kiện tự động co giãn bản đồ khi kích thước cửa sổ (Canvas) thay đổi
+        self.canvas.bind("<Configure>", self.on_canvas_resize)
 
     def setup_ui(self):
         style = ttk.Style()
@@ -104,43 +108,40 @@ class HUST_Nav_App:
         self.res_label = tk.Label(sidebar, text="\nChờ lệnh tìm kiếm...", bg=self.c_panel, fg=self.c_dim_line, wraplength=260, justify="left", font=("Segoe UI", 11))
         self.res_label.pack(pady=20, fill=tk.X)
 
-        self.canvas = tk.Canvas(self.root, bg=self.c_bg, highlightthickness=0, cursor="hand2")
+        self.canvas = tk.Canvas(self.root, bg=self.c_bg, highlightthickness=0)
         self.canvas.pack(side=tk.RIGHT, expand=True, fill=tk.BOTH)
-        self.floating_guide = tk.Label(
-            self.canvas, 
-            text="💡 Mẹo: Lăn chuột để Thu/Phóng bản đồ  |  Nhấn giữ chuột trái để Kéo thả", 
-            bg=self.c_panel,         
-            fg="#8b949e",            
-            font=("Segoe UI", 10, "italic"),
-            padx=15, pady=5
-        )
-        # Đặt cố định ở góc dưới cùng, căn giữa màn hình bản đồ
-        self.floating_guide.place(relx=0.5, rely=0.96, anchor="s")
 
-    def start_pan(self, event):
-        self.canvas.scan_mark(event.x, event.y)
-
-    def do_pan(self, event):
-        self.canvas.scan_dragto(event.x, event.y, gain=1)
-
-    def do_zoom(self, event):
-        if event.delta > 0 and self.scale_factor < 3.0:
-            self.scale_factor *= 1.1
-        elif event.delta < 0 and self.scale_factor > 0.5:
-            self.scale_factor /= 1.1
-        else:
+    def on_canvas_resize(self, event):
+        """Tự động tính toán để phóng to ảnh vừa khít không gian trống mà không làm méo ảnh"""
+        if self.is_animating or event.widget != self.canvas: 
+            return
+        if event.width == self.canvas_w and event.height == self.canvas_h: 
             return
 
-        new_w = int(self.original_bg.width * self.scale_factor)
-        new_h = int(self.original_bg.height * self.scale_factor)
+        self.canvas_w = event.width
+        self.canvas_h = event.height
+
+        # Tính toán tỷ lệ duy trì khung hình (Aspect Ratio)
+        ratio = min(self.canvas_w / self.orig_w, self.canvas_h / self.orig_h)
+        self.scale_ratio = ratio
+        new_w = int(self.orig_w * ratio)
+        new_h = int(self.orig_h * ratio)
+
+        # Căn giữa ảnh vào Canvas
+        self.offset_x = (self.canvas_w - new_w) // 2
+        self.offset_y = (self.canvas_h - new_h) // 2
+
+        # Tạo ảnh mới theo tỷ lệ
         resized_img = self.original_bg.resize((new_w, new_h), Image.Resampling.LANCZOS)
         self.bg_photo = ImageTk.PhotoImage(resized_img)
-        self.canvas.itemconfig("bg_image", image=self.bg_photo)
+        
+        self.canvas.delete("bg_image")
+        self.canvas.create_image(self.offset_x, self.offset_y, image=self.bg_photo, anchor="nw", tags="bg_image")
+        
         self.draw_map(self.current_path)
 
     def draw_orthogonal_line(self, x1, y1, x2, y2, color, width, tags, is_dashed=False):
         mid_x = (x1 + x2) / 2
-        # Nếu là đường mặc định thì dùng nét đứt (2px gạch, 4px khoảng trắng), ngược lại là nét liền
         d = (2, 4) if is_dashed else ""
         self.canvas.create_line(x1, y1, mid_x, y1, fill=color, width=width, tags=tags, capstyle=tk.ROUND, dash=d)
         self.canvas.create_line(mid_x, y1, mid_x, y2, fill=color, width=width, tags=tags, capstyle=tk.ROUND, dash=d)
@@ -150,52 +151,46 @@ class HUST_Nav_App:
         self.current_path = path
         self.canvas.delete("drawn_elements")
         node_lookup = {n['id']: n for n in self.nodes_data}
-        sf = self.scale_factor
         
-        # 1. Vẽ lưới đường đi (Nét đứt, rất mờ)
+        # Hàm tính toán tọa độ ánh xạ hoàn hảo (Tuyệt đối không lệch)
+        def get_coords(node):
+            nx = node['x'] * self.scale_ratio + self.offset_x
+            ny = node['y'] * self.scale_ratio + self.offset_y
+            return nx, ny
+
         drawn_edges = set()
         for n_id, neighbors in self.graph_dict.items():
             n1 = node_lookup[n_id]
-            x1, y1 = n1['x'] * sf, n1['y'] * sf 
+            x1, y1 = get_coords(n1)
             for neighbor_id, _ in neighbors:
                 edge_tuple = tuple(sorted((n_id, neighbor_id)))
                 if edge_tuple not in drawn_edges:
                     n2 = node_lookup[neighbor_id]
-                    x2, y2 = n2['x'] * sf, n2['y'] * sf
-                    
+                    x2, y2 = get_coords(n2)
                     edge_tag = f"edge_{edge_tuple[0]}_{edge_tuple[1]}"
-                    # Chỉnh width=1, màu xám nhạt và is_dashed=True
                     self.draw_orthogonal_line(x1, y1, x2, y2, color="#777777", width=1, tags=("drawn_elements", edge_tag), is_dashed=True)
                     drawn_edges.add(edge_tuple)
 
-        # 2. Vẽ Lộ trình chính (Nét liền, màu đỏ rực)
         if path:
             for i in range(len(path) - 1):
                 p1, p2 = path[i], path[i+1]
                 edge_tag = f"edge_{min(p1, p2)}_{max(p1, p2)}"
-                # Dùng dash="" để ép nó quay lại thành nét liền
                 self.canvas.itemconfig(edge_tag, fill=self.c_neon_red, width=5, dash="")
 
-        # 3. Vẽ các Điểm Node
         for node in self.nodes_data:
-            x, y = node['x'] * sf, node['y'] * sf
+            x, y = get_coords(node)
             if "Nga" not in node['name']:
                 node_tag = f"node_{node['id']}"
                 fill_col = self.c_neon_red if path and node['id'] in path else self.c_node_bg
                 out_col = "#ffffff" if path and node['id'] in path else self.c_dim_line
-                
-                # Thu nhỏ chấm tròn mặc định xuống size 4 cho gọn
                 size = 7 if path and node['id'] in path else 4 
                 
                 self.canvas.create_oval(x-size, y-size, x+size, y+size, fill=fill_col, outline=out_col, width=1.5, tags=("drawn_elements", node_tag))
                 
-                # Phân loại độ sáng của Chữ
                 if path and node['id'] in path:
-                    # Chữ của lộ trình thì to, in đậm, rõ ràng
                     self.canvas.create_text(x+1, y+17, text=node['name'], font=("Segoe UI", 9, "bold"), fill="#ffffff", tags=("drawn_elements", f"text_{node['id']}"))
                     self.canvas.create_text(x, y+16, text=node['name'], font=("Segoe UI", 9, "bold"), fill=self.c_bg, tags=("drawn_elements", f"text_{node['id']}"))
                 else:
-                    # Chữ bình thường thì mờ đi (#555555) để không tranh Spotlight
                     self.canvas.create_text(x+1, y+15, text=node['name'], font=("Segoe UI", 8), fill="#ffffff", tags=("drawn_elements", f"text_{node['id']}"))
                     self.canvas.create_text(x, y+14, text=node['name'], font=("Segoe UI", 8), fill="#555555", tags=("drawn_elements", f"text_{node['id']}"))
 
@@ -228,7 +223,6 @@ class HUST_Nav_App:
         distances[start_id] = 0
         pq = [(0, start_id)]
         visited = set()
-        previous = {}
 
         def step():
             if not pq:
@@ -238,7 +232,7 @@ class HUST_Nav_App:
             current_dist, current_node = heapq.heappop(pq)
             
             if current_node in visited:
-                self.root.after(20, step) 
+                self.root.after(100, step) 
                 return
                 
             visited.add(current_node)
@@ -255,14 +249,12 @@ class HUST_Nav_App:
                     new_dist = current_dist + weight
                     if new_dist < distances[neighbor]:
                         distances[neighbor] = new_dist
-                        previous[neighbor] = current_node
                         heapq.heappush(pq, (new_dist, neighbor))
                         
                         edge_tag = f"edge_{min(current_node, neighbor)}_{max(current_node, neighbor)}"
-                        # Biến nét đứt thành nét liền (dash=""), dày lên và chuyển màu cam khi thuật toán dò tới
                         self.canvas.itemconfig(edge_tag, fill=self.c_explore_edge, width=3, dash="")
 
-            self.root.after(80, step) 
+            self.root.after(400, step) 
 
         step()
 
